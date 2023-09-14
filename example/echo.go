@@ -85,6 +85,8 @@ func (s *echoServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			return
 		}
 		logging.Infof("received msg(size:=%d): %s\n", len, buf.String())
+		//使用完了要放回去，否则会内存泄露
+		byteBufPool.Put(buf)
 		//这里异步提交，避免阻塞主线程
 		_ = s.workerPool.Submit(func() {
 			_ = c.AsyncWrite([]byte("thank you"), func(c gnet.Conn, err error) error {
