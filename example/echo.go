@@ -74,8 +74,13 @@ func (s *echoServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 // to read data into your own []byte, then pass the new []byte to the new goroutine.
 func (s *echoServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	if s.async { //异步
+		//Peek 并不会移动游标
+		tempBuf, _ := c.Peek(-1)
+		fmt.Printf("%s\n", string(tempBuf))
+
 		buf := byteBufPool.Get()
-		len, err := c.WriteTo(buf)
+		len, err := c.WriteTo(buf) //会自动把游标向前推移, Peek不会
+
 		if err != nil {
 			return
 		}
@@ -93,7 +98,8 @@ func (s *echoServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		})
 
 	}
-	c.Discard(c.InboundBuffered())
+	// c.Discard(c.InboundBuffered())
+	// c.Next(-1)
 	return
 }
 
@@ -112,7 +118,6 @@ func (s *echoServer) OnTick() (delay time.Duration, action gnet.Action) {
 //---interface EventHandler end---------------------------------
 
 func main() {
-	// fmt.Print("hello world")
 	port := 16000
 	ss := &echoServer{
 		network:    "tcp",
