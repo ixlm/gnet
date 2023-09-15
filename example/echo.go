@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -85,6 +86,23 @@ func (s *echoServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			return
 		}
 		logging.Infof("received msg(size:=%d): %s\n", len, buf.String())
+		// if buf.String() == "connect" {
+		if strings.HasPrefix(buf.String(), "connect") {
+			newC, err := s.engine.Dial("tcp", "localhost:16001")
+			if err == nil {
+				_ = s.workerPool.Submit(func() {
+					_ = newC.AsyncWrite([]byte("hello, i'm a client connection"), func(c gnet.Conn, err error) error {
+						if c.RemoteAddr() != nil {
+							logging.Infof("con=%s, send successful: %v", c.RemoteAddr().String(), err)
+						} else {
+							logging.Errorf("send failed! target is not online")
+						}
+
+						return nil
+					})
+				})
+			}
+		}
 		//使用完了要放回去，否则会内存泄露
 		byteBufPool.Put(buf)
 		//这里异步提交，避免阻塞主线程

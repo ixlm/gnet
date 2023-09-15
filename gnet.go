@@ -16,16 +16,22 @@ package gnet
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/panjf2000/gnet/v2/internal/math"
+	"github.com/panjf2000/gnet/v2/internal/socket"
 	"github.com/panjf2000/gnet/v2/pkg/buffer/ring"
 	"github.com/panjf2000/gnet/v2/pkg/errors"
+	errorx "github.com/panjf2000/gnet/v2/pkg/errors"
 	"github.com/panjf2000/gnet/v2/pkg/logging"
+	"golang.org/x/sys/unix"
 )
 
 // Action is an action that occurs after the completion of an event.
@@ -109,6 +115,92 @@ func (e Engine) Stop(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// 添加一个主动拨号的功能, udp no need to dial
+// added by xlm
+func (e Engine) Dial(network, address string) (Conn, error) {
+	c, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	// 由于我们最终不使用net中的Conn,需要将它转换成gnet.Conn,
+	// 所以我们最终还需要关闭这个句柄
+	defer c.Close()
+	sc, ok := c.(syscall.Conn)
+	if !ok {
+		// return nil, errors.New("failed to convert net.Conn to syscall.Conn")
+		return nil, fmt.Errorf("failed to convert net.Conn to syscall.Conn")
+	}
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		// return nil, errors.New("failed to get syscall.RawConn from net.Conn")
+		return nil, fmt.Errorf("failed to get syscall.RawConn from net.Conn")
+	}
+
+	var dupFD int
+	ret := rc.Control(func(fd uintptr) {
+		dupFD, err = unix.Dup(int(fd))
+	})
+	if err != nil {
+		return nil, err
+	}
+	if ret != nil {
+		return nil, ret
+	}
+
+	var (
+		sockAddr unix.Sockaddr
+		gc       Conn
+		el       *eventloop
+	)
+	switch c.(type) {
+	case *net.UnixConn:
+		if sockAddr, _, _, err = socket.GetUnixSockAddr(c.RemoteAddr().Network(), c.RemoteAddr().String()); err != nil {
+			ua := c.LocalAddr().(*net.UnixAddr)
+			ua.Name = c.RemoteAddr().String() + "." + strconv.Itoa(dupFD)
+			remoteAddr := socket.SockaddrToTCPOrUnixAddr(sockAddr)
+			el = e.eng.eventLoops.next(remoteAddr)
+			setNonBlock(dupFD, true)
+			gc = newTCPConn(dupFD, el, sockAddr, c.LocalAddr(), c.RemoteAddr())
+		}
+	case *net.TCPConn:
+		if e.eng.opts.TCPNoDelay == TCPDelay {
+			if err := socket.SetNoDelay(dupFD, 0); err != nil {
+				return nil, err
+			}
+		}
+		if e.eng.opts.TCPKeepAlive > 0 {
+			if err = socket.SetKeepAlivePeriod(dupFD, int(e.eng.opts.TCPKeepAlive.Seconds())); err != nil {
+				return nil, err
+			}
+		}
+		if sockAddr, _, _, _, err = socket.GetTCPSockAddr(c.RemoteAddr().Network(), c.RemoteAddr().String()); err != nil {
+			return nil, err
+		}
+		remoteAddr := socket.SockaddrToTCPOrUnixAddr(sockAddr)
+		el = e.eng.eventLoops.next(remoteAddr)
+		setNonBlock(dupFD, true)
+		gc = newTCPConn(dupFD, el, sockAddr, c.LocalAddr(), c.RemoteAddr())
+	case *net.UDPConn:
+		if sockAddr, _, _, _, err = socket.GetUDPSockAddr(c.RemoteAddr().Network(), c.RemoteAddr().String()); err != nil {
+			return nil, err
+		}
+		remoteAddr := socket.SockaddrToUDPAddr(sockAddr)
+		el = e.eng.eventLoops.next(remoteAddr)
+		setNonBlock(dupFD, true)
+		gc = newUDPConn(dupFD, el, c.LocalAddr(), sockAddr, true)
+
+	default:
+		return nil, errorx.ErrUnsupportedProtocol
+	}
+	err = el.poller.UrgentTrigger(el.register, gc)
+	if err != nil {
+		gc.Close()
+		return nil, err
+	}
+	return gc, nil
+
 }
 
 /*

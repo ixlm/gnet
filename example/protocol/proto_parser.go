@@ -3,13 +3,12 @@ package protocol
 import (
 	"encoding/binary"
 	"errors"
-
-	"github.com/panjf2000/gnet/v2"
 )
 
 type ProtoParser interface {
 	Encode([]byte, interface{}) ([]byte, error)
-	Decode(gnet.Conn) ([]byte, error)
+	Decode([]byte) (interface{}, error)
+	GetPackLen([]byte) (int, error)
 }
 
 /*
@@ -94,8 +93,26 @@ func (parser *CustomParser) Encode(buf []byte, info interface{}) ([]byte, error)
 	return data, nil
 }
 
-func (parser *CustomParser) Decode(c gnet.Conn) ([]byte, error) {
-	return nil, nil
+func (parser *CustomParser) GetPackLen(buf []byte) (uint32, error) {
+	bufLen := len(buf)
+	if bufLen < int(NetHeaderLen) {
+		return 0, errors.New("invalid package")
+	}
+	return binary.BigEndian.Uint32(buf), nil
+}
+
+func (parser *CustomParser) Decode(buf []byte) (interface{}, error) {
+	// bufLen := len(buf)
+	// if bufLen < int(NetHeaderLen) {
+	// 	return nil, errors.New("invalid package")
+	// }
+	h, err := NewHeaderFromBytes(buf)
+	if err != nil {
+		return nil, errors.New("parse header failed")
+	}
+	// bodyLen := h.PackLen - NetHeaderLen
+
+	return h, nil
 }
 
 //-------------------- ProtoParser interface end -------------------

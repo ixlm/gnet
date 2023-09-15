@@ -44,7 +44,7 @@ func (el *eventloop) activateMainReactor() error {
 }
 
 func (el *eventloop) activateSubReactor() error {
-	if el.engine.opts.LockOSThread {
+	if el.engine.opts.LockOSThread { //这里注意锁定后还需要释放
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 	}
@@ -95,7 +95,7 @@ func (el *eventloop) run() error {
 	}
 
 	err := el.poller.Polling(func(fd int, ev uint32) error {
-		if c := el.connections.getConn(fd); c != nil {
+		if c := el.connections.getConn(fd); c != nil { //如果是一个已经存在的conn，则直接获取对应的连接
 			// Don't change the ordering of processing EPOLLOUT | EPOLLRDHUP / EPOLLIN unless you're 100%
 			// sure what you're doing!
 			// Re-ordering can easily introduce bugs and bad side-effects, as I found out painfully in the past.
@@ -117,7 +117,7 @@ func (el *eventloop) run() error {
 			}
 			return nil
 		}
-		return el.accept(fd, ev)
+		return el.accept(fd, ev) // 否则调用accept来接收新的连接
 	})
 
 	if err == errors.ErrEngineShutdown {
