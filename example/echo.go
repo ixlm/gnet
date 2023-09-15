@@ -14,6 +14,7 @@ import (
 	goPool "github.com/panjf2000/gnet/v2/pkg/pool/goroutine"
 )
 
+// 更多关于gnet的例子参见 gnet-examples
 type echoServer struct {
 	gnet.BuiltinEventEngine
 	engine     gnet.Engine
